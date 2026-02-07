@@ -15,6 +15,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(asio)
 
 find_package(OpenSSL REQUIRED)
+find_package(ZLIB REQUIRED)
 
 add_library(coro_http INTERFACE)
 target_include_directories(coro_http INTERFACE 
@@ -23,7 +24,7 @@ target_include_directories(coro_http INTERFACE
     ${asio_SOURCE_DIR}/asio/include
 )
 target_compile_definitions(coro_http INTERFACE ASIO_STANDALONE)
-target_link_libraries(coro_http INTERFACE OpenSSL::SSL OpenSSL::Crypto)
+target_link_libraries(coro_http INTERFACE OpenSSL::SSL OpenSSL::Crypto ZLIB::ZLIB)
 
 add_executable(example_sync examples/sync_example.cpp)
 target_link_libraries(example_sync PRIVATE coro_http)
@@ -33,3 +34,6 @@ target_link_libraries(example_coro PRIVATE coro_http)
 
 add_executable(example_https examples/https_example.cpp)
 target_link_libraries(example_https PRIVATE coro_http)
+
+add_executable(example_advanced examples/advanced_example.cpp)
+target_link_libraries(example_advanced PRIVATE coro_http)

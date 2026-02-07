@@ -4,3 +4,4 @@
 #include "http_response.hpp"
 #include "http_client.hpp"
 #include "coro_http_client.hpp"
+#include "client_config.hpp"

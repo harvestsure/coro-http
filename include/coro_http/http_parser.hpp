@@ -1,10 +1,20 @@
 #pragma once
 
 #include "http_response.hpp"
+#include "chunked_decoder.hpp"
+#include "compression.hpp"
 #include <string>
 #include <sstream>
+#include <algorithm>
+#include <cctype>
 
 namespace coro_http {
+
+inline bool strcasecmp_parser(const std::string& a, const char* b) {
+    size_t len = std::strlen(b);
+    return a.size() == len && std::equal(a.begin(), a.end(), b,
+        [](char ca, char cb) { return std::tolower(ca) == std::tolower(cb); });
+}
 
 inline HttpResponse parse_response(const std::string& response_data) {
     HttpResponse response;
@@ -44,19 +54,44 @@ inline HttpResponse parse_response(const std::string& response_data) {
 
     std::string body;
     std::string remaining((std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>());
+    
+    std::string transfer_encoding = response.get_header("Transfer-Encoding");
+    std::transform(transfer_encoding.begin(), transfer_encoding.end(), transfer_encoding.begin(), ::tolower);
+    
+    if (transfer_encoding.find("chunked") != std::string::npos) {
+        remaining = decode_chunked(remaining);
+    }
+    
+    std::string content_encoding = response.get_header("Content-Encoding");
+    std::transform(content_encoding.begin(), content_encoding.end(), content_encoding.begin(), ::tolower);
+    
+    if (content_encoding == "gzip") {
+        remaining = decompress_gzip(remaining);
+    } else if (content_encoding == "deflate") {
+        remaining = decompress_deflate(remaining);
+    }
+    
     response.set_body(remaining);
 
     return response;
 }
 
-inline std::string build_request(const HttpRequest& request, const UrlInfo& url_info) {
+inline std::string build_request(const HttpRequest& request, const UrlInfo& url_info, bool enable_compression = true) {
     std::ostringstream req;
     
     req << method_to_string(request.method()) << " " << url_info.path << " HTTP/1.1\r\n";
     req << "Host: " << url_info.host << "\r\n";
     
+    bool has_accept_encoding = false;
     for (const auto& [key, value] : request.headers()) {
         req << key << ": " << value << "\r\n";
+        if (strcasecmp_parser(key, "Accept-Encoding")) {
+            has_accept_encoding = true;
+        }
+    }
+    
+    if (enable_compression && !has_accept_encoding) {
+        req << "Accept-Encoding: gzip, deflate\r\n";
     }
     
     if (!request.body().empty()) {
