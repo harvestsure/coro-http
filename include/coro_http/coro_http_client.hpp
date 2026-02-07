@@ -8,6 +8,7 @@
 #include "proxy_handler.hpp"
 #include "connection_pool.hpp"
 #include "rate_limiter.hpp"
+#include "retry_policy.hpp"
 #include <asio.hpp>
 #include <asio/ssl.hpp>
 #include <asio/co_spawn.hpp>
@@ -28,7 +29,14 @@ public:
           config_(config),
           proxy_info_(parse_proxy_url(config.proxy_url)),
           connection_pool_(config.max_connections_per_host, config.connection_idle_timeout),
-          rate_limiter_(config.enable_rate_limit ? config.rate_limit_requests : 0, config.rate_limit_window) {
+          rate_limiter_(config.enable_rate_limit ? config.rate_limit_requests : 0, config.rate_limit_window),
+          retry_policy_(config.max_retries,
+                       config.initial_retry_delay,
+                       config.retry_backoff_factor,
+                       config.max_retry_delay,
+                       config.retry_on_timeout,
+                       config.retry_on_connection_error,
+                       config.retry_on_5xx) {
         ssl_context_.set_default_verify_paths();
         
         if (config_.verify_ssl) {
@@ -50,7 +58,74 @@ public:
     }
 
     asio::awaitable<HttpResponse> co_execute(const HttpRequest& request) {
-        co_return co_await co_execute_with_redirects(request, 0);
+        if (!config_.enable_retry) {
+            co_return co_await co_execute_with_redirects(request, 0);
+        }
+        
+        // Retry logic with exponential backoff
+        retry_policy_.reset();
+        
+        while (true) {
+            std::exception_ptr eptr;
+            HttpResponse response;
+            bool success = false;
+            bool should_retry_on_status = false;
+            bool should_retry_on_error = false;
+            std::chrono::milliseconds delay{0};
+            
+            // Try to execute request
+            try {
+                response = co_await co_execute_with_redirects(request, 0);
+                success = true;
+                
+                // Check if we should retry based on status code  
+                if (retry_policy_.current_attempt() < retry_policy_.max_retries() &&
+                    config_.retry_on_5xx && 
+                    response.status_code() >= 500 && 
+                    response.status_code() < 600) {
+                    should_retry_on_status = true;
+                    retry_policy_.increment_attempt();
+                    delay = retry_policy_.get_delay();
+                }
+            } catch (...) {
+                eptr = std::current_exception();
+            }
+            
+            // If successful and no retry needed, return response
+            if (success && !should_retry_on_status) {
+                co_return response;
+            }
+            
+            // Handle retry on status code
+            if (should_retry_on_status) {
+                asio::steady_timer timer(io_context_);
+                timer.expires_after(delay);
+                co_await timer.async_wait(asio::use_awaitable);
+                continue;
+            }
+            
+            // Handle exception - check if should retry
+            if (eptr) {
+                try {
+                    std::rethrow_exception(eptr);
+                } catch (const std::exception& e) {
+                    if (config_.enable_retry && retry_policy_.should_retry(e, 0)) {
+                        should_retry_on_error = true;
+                        retry_policy_.increment_attempt();
+                        delay = retry_policy_.get_delay();
+                    } else {
+                        throw;  // No more retries
+                    }
+                }
+                
+                if (should_retry_on_error) {
+                    asio::steady_timer timer(io_context_);
+                    timer.expires_after(delay);
+                    co_await timer.async_wait(asio::use_awaitable);
+                    continue;
+                }
+            }
+        }
     }
 
 private:
@@ -471,6 +546,7 @@ private:
     ProxyInfo proxy_info_;
     ConnectionPool connection_pool_;
     RateLimiter rate_limiter_;
+    RetryPolicy retry_policy_;
 };
 
 }

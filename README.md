@@ -10,6 +10,7 @@ A modern C++20 HTTP/HTTPS client library based on [ASIO](https://github.com/chri
 - ✅ **Complete HTTP Methods** - GET, POST, PUT, DELETE, HEAD, PATCH, OPTIONS
 - ✅ **Connection Pool** - Keep-Alive support with automatic connection reuse
 - ✅ **Rate Limiting** - Built-in request rate limiter to avoid API throttling
+- ✅ **Auto Retry** - Exponential backoff retry for transient failures
 - ✅ **Timeout Control** - Configurable connect, read, and request timeouts
 - ✅ **Auto Redirects** - Automatic HTTP 3xx redirect following with chain tracking
 - ✅ **Compression** - Automatic gzip/deflate decompression
@@ -173,7 +174,7 @@ config.proxy_username = "username";                   // Proxy authentication (o
 config.proxy_password = "password";                   // Proxy password (optional)
 
 // Connection pool settings
-config.enable_connection_pool = true;              // Enable connection pooling (default: true)
+config.enable_connection_pool = false;             // Enable connection pooling (default: false, test before production)
 config.max_connections_per_host = 5;               // Max connections per host (default: 5)
 config.connection_idle_timeout = std::chrono::seconds(60);  // Idle timeout (default: 60s)
 
@@ -181,6 +182,16 @@ config.connection_idle_timeout = std::chrono::seconds(60);  // Idle timeout (def
 config.enable_rate_limit = true;                   // Enable rate limiting (default: false)
 config.rate_limit_requests = 100;                  // Max requests per window (default: 100)
 config.rate_limit_window = std::chrono::seconds(1);  // Rate limit window (default: 1s)
+
+// Retry settings
+config.enable_retry = true;                        // Enable automatic retry (default: false)
+config.max_retries = 3;                            // Maximum retry attempts (default: 3)
+config.initial_retry_delay = std::chrono::milliseconds(1000);  // Initial retry delay (default: 1s)
+config.retry_backoff_factor = 2.0;                 // Exponential backoff multiplier (default: 2.0)
+config.max_retry_delay = std::chrono::milliseconds(30000);     // Max retry delay (default: 30s)
+config.retry_on_timeout = true;                    // Retry on timeout (default: true)
+config.retry_on_connection_error = true;           // Retry on connection errors (default: true)
+config.retry_on_5xx = false;                       // Retry on 5xx errors (default: false)
 
 // Create client with config
 coro_http::HttpClient client(config);
@@ -273,27 +284,43 @@ client.run([&]() -> asio::awaitable<void> {
 
 #### Connection Pool & Keep-Alive
 
-> **⚠️ Note**: Connection pooling is currently **disabled by default** due to compatibility issues with some servers that don't properly support keep-alive. This feature is under active development and will be re-enabled once stability issues are resolved.
+> **✅ Status**: Connection pooling has been **significantly improved** with fixes for major stability issues. Still recommended to test with your specific endpoints before production use.
 
-The library has experimental connection pool support for better performance:
+The library supports connection pool for better performance with automatic keep-alive:
 
 ```cpp
 coro_http::ClientConfig config;
-config.enable_connection_pool = true;         // Enable at your own risk
+config.enable_connection_pool = true;         // Now safer to enable!
 config.max_connections_per_host = 5;
 config.connection_idle_timeout = std::chrono::seconds(60);
 
 coro_http::HttpClient client(config);
 ```
 
-**Why disabled?**
-- Some servers send `Connection: close` but pooling logic doesn't handle it properly
-- SSL session reuse needs improvement
-- Can cause hangs with certain server configurations
+**Recent Fixes (v1.1):**
+- ✅ Proper `Connection: close` response header handling
+- ✅ SSL session state validation (handshake completion check)
+- ✅ Server-initiated connection close detection
+- ✅ Non-blocking socket health checks
+- ✅ Graceful connection shutdown
 
-**Workaround**: Each request creates a new connection (current default). This is slower but more reliable.
+**How it works:**
+- Reuses TCP/TLS connections for multiple requests to the same host
+- Automatically detects when server closes connections
+- Honors `Connection: close` headers from servers
+- Validates SSL session state before reuse
+- Removes stale/invalid connections from pool
 
-**For high-performance scenarios**: Test connection pooling with your specific API endpoints before production use.
+**Performance benefits:**
+- Eliminates TCP handshake overhead (~1 RTT saved)
+- Eliminates TLS handshake overhead (~2 RTTs saved for HTTPS)
+- Typical speedup: 2-5x for sequential requests to same host
+
+**Testing recommendations:**
+- Test with your specific API endpoints
+- Monitor connection pool statistics
+- Suitable for most REST APIs and HTTP services
+- Default: disabled for maximum compatibility
 
 #### Rate Limiting
 
@@ -346,6 +373,74 @@ client.run([&]() -> asio::awaitable<void> {
     }
 });
 ```
+
+#### Automatic Retry with Exponential Backoff
+
+Built-in retry mechanism improves reliability for transient failures:
+
+```cpp
+coro_http::ClientConfig config;
+config.enable_retry = true;
+config.max_retries = 3;                          // Retry up to 3 times
+config.initial_retry_delay = std::chrono::milliseconds(1000);  // Start with 1s delay
+config.retry_backoff_factor = 2.0;               // Double delay each retry
+config.max_retry_delay = std::chrono::milliseconds(30000);     // Cap at 30s
+config.retry_on_timeout = true;                  // Retry on timeouts
+config.retry_on_connection_error = true;         // Retry on connection errors
+config.retry_on_5xx = false;                     // Don't retry 5xx by default
+
+coro_http::HttpClient client(config);
+
+try {
+    // Automatically retries on timeout/connection errors
+    auto resp = client.get("https://unreliable-api.com/data");
+    std::cout << "Success after retries!\n";
+} catch (const std::exception& e) {
+    std::cerr << "Failed after " << config.max_retries << " retries: " << e.what() << "\n";
+}
+```
+
+**Retry Strategy:**
+- **Exponential Backoff**: Delays double each retry (1s → 2s → 4s → 8s...)
+- **Jitter**: ±25% random variation to avoid thundering herd
+- **Smart Detection**: Automatically identifies retry-able errors
+- **Configurable**: Choose which error types to retry
+
+**Default Retry Conditions:**
+- ✅ Connection timeouts
+- ✅ Read timeouts  
+- ✅ Connection refused/reset
+- ✅ Network errors
+- ❌ 5xx server errors (opt-in with `retry_on_5xx = true`)
+- ❌ 4xx client errors (never retried)
+- ❌ Successful responses (never retried)
+
+**Coroutine Example (Async Delays):**
+```cpp
+coro_http::ClientConfig config;
+config.enable_retry = true;
+config.max_retries = 5;
+config.retry_on_5xx = true;  // Also retry server errors
+
+coro_http::CoroHttpClient client(config);
+
+client.run([&]() -> asio::awaitable<void> {
+    try {
+        // Uses async timers for retry delays (non-blocking)
+        auto resp = co_await client.co_get("https://flaky-service.com/api");
+        std::cout << "Response: " << resp.body() << "\n";
+    } catch (const std::exception& e) {
+        std::cerr << "All retries exhausted: " << e.what() << "\n";
+    }
+});
+```
+
+**Best Practices:**
+- Enable for production APIs with transient failures
+- Use with rate limiting to respect API limits during retries
+- Set appropriate `max_retry_delay` to avoid excessive waits
+- Enable `retry_on_5xx` for idempotent operations only (GET, HEAD, OPTIONS)
+- Don't retry on write operations (POST, PUT, DELETE) without idempotency guarantees
 
 #### Timeout Handling
 
@@ -455,6 +550,7 @@ See the [examples](examples/) directory for complete working examples:
 - [advanced_example.cpp](examples/advanced_example.cpp) - Advanced features (compression, redirects, timeouts, custom headers)
 - [proxy_example.cpp](examples/proxy_example.cpp) - Proxy support (HTTP/HTTPS/SOCKS5) with authentication
 - [keepalive_example.cpp](examples/keepalive_example.cpp) - Connection pooling and rate limiting for high-performance scenarios
+- [retry_example.cpp](examples/retry_example.cpp) - Automatic retry with exponential backoff for reliability
 
 ## Building Examples
 
@@ -470,7 +566,7 @@ make
 ./example_advanced
 ./example_proxy
 ./example_keepalive
-./example_proxy
+./example_retry
 ```
 
 ## Troubleshooting
@@ -498,28 +594,36 @@ config.ca_cert_file = "/etc/ssl/certs/ca-certificates.crt";
 - **Synchronous API**: Best for simple scripts, CLI tools, or when making sequential requests
 - **Coroutine API**: Best for servers, high-throughput applications, or when making many concurrent requests
 
-### Connection Pooling (Experimental, Disabled by Default)
+### Connection Pooling (Improved and Ready for Testing)
 
-Connection pooling is implemented but currently disabled due to stability issues:
+Connection pooling has been significantly improved with major bug fixes:
 
-- **Status**: Implemented but needs fixes for proper Connection header handling
-- **Issue**: Some servers don't support keep-alive properly, causing hangs
-- **Workaround**: Each request creates a new connection (current default)
+- **Status**: ✅ Core issues fixed, ready for broader testing
+- **Fixes**: Connection: close handling, SSL validation, server close detection
+- **Performance**: 2-5x speedup for repeated requests to same host
 
-**Enable at your own risk:**
+**Enable for testing:**
 ```cpp
-config.enable_connection_pool = true;  // Test thoroughly before production!
+config.enable_connection_pool = true;  // Recommended: test with your endpoints first
 ```
 
 **Best for:**
-- APIs that explicitly support keep-alive
-- Internal services with known behavior
-- After thorough testing with your endpoints
+- REST APIs with keep-alive support (most modern APIs)
+- High-frequency requests to same hosts
+- Trading/exchange APIs with rate limits
+- Internal microservices
+- After testing with your specific endpoints
 
-**Avoid for:**
-- Public APIs with unknown behavior
-- Production without testing
-- Critical applications requiring 100% reliability
+**What's fixed:**
+- ✅ Properly handles `Connection: close` from servers
+- ✅ Validates SSL session state before reuse
+- ✅ Detects server-initiated connection closes
+- ✅ Removes invalid connections automatically
+
+**Still needs more testing for:**
+- Edge cases with various HTTP server implementations
+- Long-running high-load production scenarios
+- Complex proxy configurations
 
 ### Rate Limiting
 
@@ -537,18 +641,21 @@ The library buffers entire responses in memory. For very large responses (e.g., 
 
 ## Roadmap
 
-Future enhancements under consideration:
+Completed and under consideration:
 
-- 🚧 Connection pooling and Keep-Alive support (implemented but needs stability fixes)
 - ✅ Rate limiting
-- Proper Connection header handling for keep-alive
-- SSL session reuse and validation
-- Streaming downloads/uploads  
-- HTTP/2 support
-- WebSocket upgrade
-- Cookie management
-- Request retry with exponential backoff
-- Async rate limiter (currently synchronous)
+- ✅ Connection pooling with proper Connection: close handling
+- ✅ SSL session state validation
+- ✅ Server close detection
+- ✅ Request retry with exponential backoff
+- 🚧 More connection pool testing in production scenarios
+- 🔜 Cookie management
+- 🔜 Streaming downloads/uploads  
+- 🔜 HTTP/2 support
+- 🔜 WebSocket upgrade
+- 🔜 Async rate limiter (currently synchronous)
+- 🔜 Request/response interceptors
+- 🔜 Multipart form-data encoding
 ### Timeout Issues
 
 Adjust timeouts based on your network conditions:

@@ -8,6 +8,7 @@
 #include "proxy_handler.hpp"
 #include "connection_pool.hpp"
 #include "rate_limiter.hpp"
+#include "retry_policy.hpp"
 #include <asio.hpp>
 #include <asio/ssl.hpp>
 #include <asio/steady_timer.hpp>
@@ -27,7 +28,14 @@ public:
           config_(config),
           proxy_info_(parse_proxy_url(config.proxy_url)),
           connection_pool_(config.max_connections_per_host, config.connection_idle_timeout),
-          rate_limiter_(config.enable_rate_limit ? config.rate_limit_requests : 0, config.rate_limit_window) {
+          rate_limiter_(config.enable_rate_limit ? config.rate_limit_requests : 0, config.rate_limit_window),
+          retry_policy_(config.max_retries,
+                       config.initial_retry_delay,
+                       config.retry_backoff_factor,
+                       config.max_retry_delay,
+                       config.retry_on_timeout,
+                       config.retry_on_connection_error,
+                       config.retry_on_5xx) {
         ssl_context_.set_default_verify_paths();
         
         if (config_.verify_ssl) {
@@ -49,7 +57,45 @@ public:
     }
 
     HttpResponse execute(const HttpRequest& request) {
-        return execute_with_redirects(request, 0);
+        if (!config_.enable_retry) {
+            return execute_with_redirects(request, 0);
+        }
+        
+        // Retry logic with exponential backoff
+        retry_policy_.reset();
+        std::exception_ptr last_exception;
+        
+        while (true) {
+            try {
+                auto response = execute_with_redirects(request, 0);
+                
+                // Check if we should retry based on status code
+                if (retry_policy_.current_attempt() < retry_policy_.max_retries() &&
+                    config_.retry_on_5xx && 
+                    response.status_code() >= 500 && 
+                    response.status_code() < 600) {
+                    
+                    retry_policy_.increment_attempt();
+                    retry_policy_.sleep_for_retry();
+                    continue;
+                }
+                
+                return response;
+                
+            } catch (const std::exception& e) {
+                last_exception = std::current_exception();
+                
+                // Check if we should retry
+                if (config_.enable_retry && retry_policy_.should_retry(e, 0)) {
+                    retry_policy_.increment_attempt();
+                    retry_policy_.sleep_for_retry();
+                    continue;
+                }
+                
+                // No more retries, rethrow
+                throw;
+            }
+        }
     }
 
 private:
@@ -491,6 +537,7 @@ private:
     ProxyInfo proxy_info_;
     ConnectionPool connection_pool_;
     RateLimiter rate_limiter_;
+    RetryPolicy retry_policy_;
 };
 
 }

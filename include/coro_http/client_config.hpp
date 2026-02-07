@@ -31,6 +31,16 @@ struct ClientConfig {
     bool enable_rate_limit{false};
     int rate_limit_requests{100};      // requests per window
     std::chrono::seconds rate_limit_window{1};  // window size
+    
+    // Retry settings
+    bool enable_retry{false};
+    int max_retries{3};                // Maximum number of retry attempts
+    std::chrono::milliseconds initial_retry_delay{1000};  // Initial delay before retry
+    double retry_backoff_factor{2.0};  // Exponential backoff multiplier
+    std::chrono::milliseconds max_retry_delay{30000};     // Maximum retry delay
+    bool retry_on_timeout{true};       // Retry on connection/read timeout
+    bool retry_on_connection_error{true};  // Retry on connection errors
+    bool retry_on_5xx{false};          // Retry on 5xx server errors (disabled by default)
 };
 
 }
