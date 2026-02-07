@@ -17,6 +17,7 @@
 #include <asio/use_awaitable.hpp>
 #include <asio/steady_timer.hpp>
 #include <sstream>
+#include <type_traits>
 
 namespace coro_http {
 
@@ -210,7 +211,7 @@ private:
         }
         
         co_await asio::async_write(socket, asio::buffer(request_str), asio::use_awaitable);
-        std::string response_data = co_await co_read_response(socket);
+        std::string response_data = co_await co_read_response(socket, request.method());
         
         co_return parse_response(response_data);
     }
@@ -230,7 +231,7 @@ private:
         
         try {
             co_await asio::async_write(*socket, asio::buffer(request_str), asio::use_awaitable);
-            std::string response_data = co_await co_read_response(*socket);
+            std::string response_data = co_await co_read_response(*socket, request.method());
             
             // Parse response and check Connection header
             auto response = parse_response(response_data);
@@ -288,7 +289,7 @@ private:
         std::string request_str = build_request(request, url_info, config_.enable_compression);
         co_await asio::async_write(ssl_socket, asio::buffer(request_str), asio::use_awaitable);
         
-        std::string response_data = co_await co_read_response(ssl_socket);
+        std::string response_data = co_await co_read_response(ssl_socket, request.method());
         
         co_return parse_response(response_data);
     }
@@ -314,7 +315,7 @@ private:
         
         try {
             co_await asio::async_write(*ssl_stream, asio::buffer(request_str), asio::use_awaitable);
-            std::string response_data = co_await co_read_response(*ssl_stream);
+            std::string response_data = co_await co_read_response(*ssl_stream, request.method());
             
             // Parse response and check Connection header
             auto response = parse_response(response_data);
@@ -471,7 +472,26 @@ private:
     }
 
     template<typename AsyncReadStream>
-    asio::awaitable<std::string> co_read_response(AsyncReadStream& stream) {
+    struct has_lowest_layer_impl {
+        template<typename T>
+        static auto test(int) -> decltype(std::declval<T&>().lowest_layer(), std::true_type());
+        template<typename>
+        static std::false_type test(...);
+        using type = decltype(test<AsyncReadStream>(0));
+        static constexpr bool value = type::value;
+    };
+
+    template<typename AsyncReadStreamT>
+    static auto& get_underlying_layer(AsyncReadStreamT& s) {
+        if constexpr (has_lowest_layer_impl<AsyncReadStreamT>::value) {
+            return s.lowest_layer();
+        } else {
+            return s;
+        }
+    }
+
+    template<typename AsyncReadStream>
+    asio::awaitable<std::string> co_read_response(AsyncReadStream& stream, HttpMethod request_method = HttpMethod::GET) {
         std::string response_data;
         std::array<char, 8192> buffer;
         
@@ -526,6 +546,11 @@ private:
                 
                 // Check if we have complete body
                 if (headers_complete) {
+                    // Per RFC, responses to HEAD must not include a message body.
+                    // Don't wait for a body for HEAD requests — treat response as complete.
+                    if (request_method == HttpMethod::HEAD) {
+                        break;
+                    }
                     size_t body_size = response_data.size() - headers_end_pos;
                     
                     if (is_chunked) {
@@ -549,22 +574,34 @@ private:
             }
             
             // Safety: if we have headers but no content length and no chunked,
-            // and we got some data, try non-blocking read to check for more data
+            // and we got some data, try a short wait and then check for available bytes
             if (headers_complete && !is_chunked && content_length == 0 && len > 0) {
-                // For async operations, we can't easily do non-blocking peek
-                // Just wait a bit and see if more data comes
                 asio::steady_timer timer(io_context_);
                 timer.expires_after(std::chrono::milliseconds(100));
                 co_await timer.async_wait(asio::use_awaitable);
-                
-                // Try one more read with short timeout
-                auto [peek_ec, peek_len] = co_await stream.async_read_some(
-                    asio::buffer(buffer),
-                    asio::as_tuple(asio::use_awaitable)
-                );
-                
-                if (peek_len > 0) {
-                    response_data.append(buffer.data(), peek_len);
+
+                // Determine underlying layer (socket) to query available bytes.
+                // Works for both plain sockets and ssl streams.
+                int available_bytes = 0;
+                try {
+                    if constexpr (has_lowest_layer_impl<AsyncReadStream>::value) {
+                        available_bytes = static_cast<int>(get_underlying_layer(stream).available());
+                    } else {
+                        available_bytes = static_cast<int>(stream.available());
+                    }
+                } catch (...) {
+                    available_bytes = 0;
+                }
+
+                if (available_bytes > 0) {
+                    auto [peek_ec, peek_len] = co_await stream.async_read_some(
+                        asio::buffer(buffer),
+                        asio::as_tuple(asio::use_awaitable)
+                    );
+
+                    if (peek_len > 0) {
+                        response_data.append(buffer.data(), peek_len);
+                    }
                 } else {
                     // No more data, response complete
                     break;

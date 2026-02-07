@@ -181,7 +181,7 @@ private:
         }
         
         asio::write(socket, asio::buffer(request_str));
-        std::string response_data = read_with_timeout(socket);
+        std::string response_data = read_with_timeout(socket, request.method());
         
         return parse_response(response_data);
     }
@@ -200,7 +200,7 @@ private:
         
         try {
             asio::write(*socket, asio::buffer(request_str));
-            std::string response_data = read_with_timeout(*socket);
+            std::string response_data = read_with_timeout(*socket, request.method());
             
             auto response = parse_response(response_data);
             
@@ -258,7 +258,7 @@ private:
         std::string request_str = build_request(request, url_info, config_.enable_compression);
         asio::write(ssl_socket, asio::buffer(request_str));
         
-        std::string response_data = read_with_timeout(ssl_socket);
+        std::string response_data = read_with_timeout(ssl_socket, request.method());
         
         return parse_response(response_data);
     }
@@ -283,7 +283,7 @@ private:
         
         try {
             asio::write(*ssl_stream, asio::buffer(request_str));
-            std::string response_data = read_with_timeout(*ssl_stream);
+            std::string response_data = read_with_timeout(*ssl_stream, request.method());
             
             auto response = parse_response(response_data);
             
@@ -432,7 +432,7 @@ private:
     }
 
     template<typename SyncReadStream>
-    std::string read_with_timeout(SyncReadStream& stream) {
+    std::string read_with_timeout(SyncReadStream& stream, HttpMethod request_method = HttpMethod::GET) {
         std::string response_data;
         std::array<char, 8192> buffer;
         
@@ -485,6 +485,11 @@ private:
                 
                 // Check if we have complete body
                 if (headers_complete) {
+                    // Per RFC, responses to HEAD must not include a message body.
+                    // Don't wait for a body for HEAD requests — treat response as complete.
+                    if (request_method == HttpMethod::HEAD) {
+                        break;
+                    }
                     size_t body_size = response_data.size() - headers_end_pos;
                     
                     if (is_chunked) {
