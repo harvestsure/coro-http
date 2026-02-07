@@ -1,0 +1,37 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg/master/scripts/vcpkg.schema.json",
+  "name": "coro-http",
+  "version": "1.0.0",
+  "description": "A modern C++20 HTTP/HTTPS client library based on ASIO, supporting both synchronous and coroutine-based interfaces",
+  "homepage": "https://github.com/harvestsure/coro-http",
+  "documentation": "https://github.com/harvestsure/coro-http#readme",
+  "license": "MIT",
+  "authors": "Harvest Sure",
+  "maintainers": "Harvest Sure <harvestsure@gmail.com>",
+  "dependencies": [
+    {
+      "name": "asio",
+      "version>=": "1.30.2"
+    },
+    {
+      "name": "openssl",
+      "version>=": "3.0.0"
+    },
+    {
+      "name": "zlib",
+      "version>=": "1.2.11"
+    }
+  ],
+  "keywords": [
+    "http",
+    "https",
+    "client",
+    "http-client",
+    "async",
+    "coroutines",
+    "c++20",
+    "asio",
+    "ssl",
+    "tls"
+  ]
+}

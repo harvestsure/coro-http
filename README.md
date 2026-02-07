@@ -63,7 +63,7 @@ include(FetchContent)
 
 FetchContent_Declare(
     coro_http
-    GIT_REPOSITORY https://github.com/yourusername/coro_http.git
+    GIT_REPOSITORY https://github.com/harvestsure/coro-http.git
     GIT_TAG main
 )
 
@@ -75,7 +75,7 @@ target_link_libraries(your_target PRIVATE coro_http)
 ### Manual Build
 
 ```bash
-git clone https://github.com/yourusername/coro_http.git
+git clone https://github.com/harvestsure/coro-http.git
 cd coro_http (Simple & Straightforward)
 
 ```cpp
