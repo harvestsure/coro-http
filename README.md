@@ -33,6 +33,24 @@ A modern C++20 HTTP/HTTPS client library based on [ASIO](https://github.com/chri
 - OpenSSL (for HTTPS support)
 - zlib (for compression support)
 
+### Windows Dependencies
+
+On Windows, we recommend using [vcpkg](https://github.com/microsoft/vcpkg) to install dependencies:
+
+```bash
+# Install vcpkg (if not already installed)
+git clone https://github.com/microsoft/vcpkg.git
+cd vcpkg
+bootstrap-vcpkg.bat
+
+# Install dependencies
+vcpkg install openssl:x64-windows zlib:x64-windows
+
+# Configure CMake with vcpkg toolchain
+cmake -B build -DCMAKE_TOOLCHAIN_FILE=[vcpkg root]/scripts/buildsystems/vcpkg.cmake
+cmake --build build
+```
+
 ## Installation
 
 ### Using CMake FetchContent
