@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [ main, develop ]
 
+env:
+  VCPKG_COMMIT_ID: 4065f37d0a6628ef17cf6ee15385f9091f1075bc
+
 jobs:
   build-and-test:
     strategy:
@@ -44,27 +47,26 @@ jobs:
       run: |
         brew install openssl zlib llvm@18
     
-    - name: Install dependencies (Windows)
+    - name: Cache vcpkg (Windows)
       if: runner.os == 'Windows'
-      run: |
-        choco install ninja cmake -y
-    
-    - name: Setup vcpkg cache (Windows)
-      if: runner.os == 'Windows'
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: |
-          ${{ github.workspace }}/vcpkg_installed
-          ~/.vcpkg
-        key: vcpkg-windows-${{ hashFiles('**/vcpkg.json') }}
-        restore-keys: vcpkg-windows-
+          vcpkg/archives
+          vcpkg/packages
+          vcpkg/installed
+          vcpkg/buildtrees
+          vcpkg/downloads
+        key: vcpkg-windows-${{ env.VCPKG_COMMIT_ID }}-${{ hashFiles('**/vcpkg.json') }}
+        restore-keys: |
+          vcpkg-windows-${{ env.VCPKG_COMMIT_ID }}-
     
-    - name: Cache APT packages (Linux)
-      if: runner.os == 'Linux'
-      uses: awalsh128/cache-apt-pkgs-action@latest
+    - name: Setup vcpkg (Windows)
+      if: runner.os == 'Windows'
+      uses: lukka/run-vcpkg@v11
       with:
-        packages: libssl-dev zlib1g-dev gcc-12 g++-12 clang-18
-        version: 1.0
+        vcpkgGitCommitId: '${{ env.VCPKG_COMMIT_ID }}'
+        vcpkgJsonGlob: '**/vcpkg.json'
     
     - name: Setup CMake
       uses: lukka/get-cmake@latest
@@ -102,9 +104,14 @@ jobs:
     
     - name: Configure CMake (Windows MSVC)
       if: runner.os == 'Windows'
+      shell: bash
       run: |
         cd build
-        cmake .. -DBUILD_TESTS=ON -DENABLE_SANITIZER=OFF -G "Ninja Multi-Config"
+        cmake -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" \
+          -DBUILD_TESTS=ON \
+          -DENABLE_SANITIZER=OFF \
+          -G "Visual Studio 17 2022" \
+          ..
     
     - name: Build
       run: |
@@ -112,45 +119,76 @@ jobs:
         cmake --build . --config Release --parallel 4
     
     - name: Run tests
+      shell: bash
       run: |
         cd build
-        ctest --output-on-failure --timeout 30
+        ctest --output-on-failure --timeout 30 -C Release
     
     - name: Run example (coro)
       timeout-minutes: 2
+      shell: bash
       run: |
         cd build
-        timeout 5 ./example_coro || true
+        if [ "$RUNNER_OS" = "Windows" ]; then
+          timeout 5 ./Release/example_coro.exe || true
+        else
+          timeout 5 ./example_coro || true
+        fi
     
     - name: Run example (https)
       timeout-minutes: 2
+      shell: bash
       run: |
         cd build
-        timeout 5 ./example_https || true
+        if [ "$RUNNER_OS" = "Windows" ]; then
+          timeout 5 ./Release/example_https.exe || true
+        else
+          timeout 5 ./example_https || true
+        fi
     
     - name: Run example (keepalive)
       timeout-minutes: 2
+      shell: bash
       run: |
         cd build
-        timeout 5 ./example_keepalive || true
+        if [ "$RUNNER_OS" = "Windows" ]; then
+          timeout 5 ./Release/example_keepalive.exe || true
+        else
+          timeout 5 ./example_keepalive || true
+        fi
     
     - name: Run example (proxy)
       timeout-minutes: 2
+      shell: bash
       run: |
         cd build
-        timeout 5 ./example_proxy || true
+        if [ "$RUNNER_OS" = "Windows" ]; then
+          timeout 5 ./Release/example_proxy.exe || true
+        else
+          timeout 5 ./example_proxy || true
+        fi
     
     - name: Run example (retry)
       timeout-minutes: 2
+      shell: bash
       run: |
         cd build
-        timeout 5 ./example_retry || true
+        if [ "$RUNNER_OS" = "Windows" ]; then
+          timeout 5 ./Release/example_retry.exe || true
+        else
+          timeout 5 ./example_retry || true
+        fi
     
     - name: Run example (sse)
       timeout-minutes: 2
+      shell: bash
       run: |
         cd build
-        timeout 5 ./example_sse_coro || true
+        if [ "$RUNNER_OS" = "Windows" ]; then
+          timeout 5 ./Release/example_sse_coro.exe || true
+        else
+          timeout 5 ./example_sse_coro || true
+        fi
 
   sanitizer-build:
     runs-on: ubuntu-latest
