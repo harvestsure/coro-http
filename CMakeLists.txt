@@ -64,3 +64,27 @@ target_link_libraries(example_auth_local PRIVATE coro_http)
 
 add_executable(example_sse_coro examples/sse_coro_example.cpp)
 target_link_libraries(example_sse_coro PRIVATE coro_http)
+
+# Tests
+option(BUILD_TESTS "Build tests" OFF)
+
+if (BUILD_TESTS)
+  enable_testing()
+  
+  # Core functionality tests
+  add_executable(test_timeout tests/test_timeout.cpp)
+  target_link_libraries(test_timeout PRIVATE coro_http)
+  add_test(NAME timeout COMMAND test_timeout TIMEOUT 30)
+  
+  add_executable(test_redirect tests/test_redirect.cpp)
+  target_link_libraries(test_redirect PRIVATE coro_http)
+  add_test(NAME redirect COMMAND test_redirect TIMEOUT 30)
+  
+  add_executable(test_connection_pool tests/test_connection_pool.cpp)
+  target_link_libraries(test_connection_pool PRIVATE coro_http)
+  add_test(NAME connection_pool COMMAND test_connection_pool TIMEOUT 30)
+  
+  add_executable(test_error_handling tests/test_error_handling.cpp)
+  target_link_libraries(test_error_handling PRIVATE coro_http)
+  add_test(NAME error_handling COMMAND test_error_handling TIMEOUT 30)
+endif()
