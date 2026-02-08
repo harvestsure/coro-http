@@ -64,28 +64,7 @@ int main() {
 }
 ```
 
-## SSE - Sync Version
-
-```cpp
-#include <coro_http/coro_http.hpp>
-
-int main() {
-    asio::io_context io_ctx;
-    coro_http::HttpClient client(io_ctx);
-    
-    coro_http::HttpRequest request(coro_http::HttpMethod::GET,
-                                   "http://localhost:8888/events");
-    
-    client.stream_events(request, [](const coro_http::SseEvent& event) {
-        std::cout << "Event: " << event.type << "\n";
-        std::cout << "Data: " << event.data << "\n";
-    });
-    
-    return 0;
-}
-```
-
-## SSE - Async/Coroutine Version
+## SSE - Asynchronous Example
 
 ```cpp
 #include <coro_http/coro_http.hpp>
@@ -116,28 +95,47 @@ int main() {
 ## With Authentication
 
 ```cpp
-coro_http::HttpRequest request(coro_http::HttpMethod::GET,
-                               "https://api.example.com/data");
-request.add_header("Authorization", "Bearer token123");
+asio::io_context io_ctx;
+coro_http::CoroHttpClient client(io_ctx);
 
-// For Basic Auth
-std::string credentials = "user:password";
-std::string encoded = base64_encode(credentials);
-request.add_header("Authorization", "Basic " + encoded);
-
-auto response = client.get(request);
+client.run([&]() -> asio::awaitable<void> {
+    // Bearer Token Authentication
+    coro_http::HttpRequest request(coro_http::HttpMethod::GET,
+                                   "https://api.example.com/data");
+    request.add_header("Authorization", "Bearer token123");
+    
+    auto response = co_await client.co_execute(request);
+    std::cout << "Bearer Auth Status: " << response.status_code() << "\n";
+    
+    // Basic Authentication
+    coro_http::HttpRequest basic_req(coro_http::HttpMethod::GET,
+                                     "https://api.example.com/data");
+    std::string auth = coro_http::Auth::basic("user", "password");
+    basic_req.add_header("Authorization", auth);
+    
+    auto basic_response = co_await client.co_execute(basic_req);
+    std::cout << "Basic Auth Status: " << basic_response.status_code() << "\n";
+});
 ```
 
 ## Retry Policy
 
 ```cpp
-coro_http::RetryPolicy retry_policy;
-retry_policy.max_retries = 3;
-retry_policy.initial_delay = std::chrono::milliseconds(100);
-retry_policy.max_delay = std::chrono::seconds(10);
-retry_policy.backoff_factor = 2.0;
+coro_http::ClientConfig config;
+config.enable_retry = true;
+config.max_retries = 3;
+config.initial_retry_delay = std::chrono::milliseconds(100);
+config.max_retry_delay = std::chrono::seconds(10);
+config.retry_backoff_factor = 2.0;
+config.retry_on_timeout = true;
+config.retry_on_connection_error = true;
 
-// Apply to request...
+coro_http::CoroHttpClient client(io_ctx, config);
+
+client.run([&]() -> asio::awaitable<void> {
+    auto response = co_await client.co_get("https://api.example.com/data");
+    // Automatic retry with exponential backoff will be applied
+});
 ```
 
 ## Running Examples
@@ -147,12 +145,7 @@ Build examples:
 cd coro-http
 mkdir build && cd build
 cmake ..
-make example_sse_sync example_sse_coro
-```
-
-Run sync example:
-```bash
-./example_sse_sync http://localhost:8888/events
+make example_sse_coro
 ```
 
 Run async example:

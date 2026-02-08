@@ -10,7 +10,7 @@ The coro_http library provides full support for consuming Server-Sent Events (SS
 - ✅ Multi-line data field support
 - ✅ Custom event fields and types
 - ✅ Automatic retry timing handling
-- ✅ Both synchronous and async APIs
+- ✅ Async API with C++20 coroutines
 - ✅ HTTP and HTTPS support
 
 ## SseEvent Structure
@@ -25,45 +25,11 @@ struct SseEvent {
 };
 ```
 
-## Synchronous API Example
+## Asynchronous API Example
 
 ```cpp
 #include <coro_http/coro_http.hpp>
 #include <iostream>
-
-int main() {
-    asio::io_context io_ctx;
-    coro_http::HttpClient client(io_ctx);
-    
-    coro_http::HttpRequest request(coro_http::HttpMethod::GET, 
-                                   "https://example.com/events");
-    request.add_header("Accept", "text/event-stream");
-    request.add_header("Cache-Control", "no-cache");
-    
-    client.stream_events(request, [](const coro_http::SseEvent& event) {
-        if (!event.type.empty()) {
-            std::cout << "Type: " << event.type << "\n";
-        }
-        if (!event.id.empty()) {
-            std::cout << "ID: " << event.id << "\n";
-        }
-        std::cout << "Data: " << event.data << "\n";
-        
-        // Handle custom fields
-        for (const auto& [key, value] : event.fields) {
-            std::cout << key << ": " << value << "\n";
-        }
-        std::cout << "\n";
-    });
-    
-    return 0;
-}
-```
-
-## Coroutine API Example
-
-```cpp
-#include <coro_http/coro_http.hpp>
 
 int main() {
     asio::io_context io_ctx;
@@ -73,22 +39,64 @@ int main() {
         coro_http::HttpRequest request(coro_http::HttpMethod::GET,
                                        "https://example.com/events");
         request.add_header("Accept", "text/event-stream");
+        request.add_header("Cache-Control", "no-cache");
         
         int event_count = 0;
         
         co_await client.co_stream_events(request, 
             [&event_count](const coro_http::SseEvent& event) {
                 event_count++;
-                std::cout << "Event " << event_count << ": " 
-                          << event.type << "\n";
+                
+                if (!event.type.empty()) {
+                    std::cout << "Type: " << event.type << "\n";
+                }
+                if (!event.id.empty()) {
+                    std::cout << "ID: " << event.id << "\n";
+                }
+                std::cout << "Data: " << event.data << "\n";
+                
+                // Handle custom fields
+                for (const auto& [key, value] : event.fields) {
+                    std::cout << key << ": " << value << "\n";
+                }
+                std::cout << "\n";
             });
         
-        std::cout << "Stream completed. Total: " << event_count << "\n";
+        std::cout << "Stream completed. Total events: " << event_count << "\n";
     });
     
     return 0;
 }
 ```
+
+## Example: Multiple Event Streams
+
+```cpp
+#include <coro_http/coro_http.hpp>
+
+asio::awaitable<void> handle_stream(coro_http::CoroHttpClient& client, 
+                                    const std::string& url) {
+    coro_http::HttpRequest request(coro_http::HttpMethod::GET, url);
+    request.add_header("Accept", "text/event-stream");
+    
+    co_await client.co_stream_events(request,
+        [url](const coro_http::SseEvent& event) {
+            std::cout << "Stream(" << url << "): " << event.data << "\n";
+        });
+}
+
+int main() {
+    asio::io_context io_ctx;
+    coro_http::CoroHttpClient client(io_ctx);
+    
+    client.run([&]() -> asio::awaitable<void> {
+        // Handle multiple streams concurrently
+        co_await handle_stream(client, "https://stream1.example.com");
+        co_await handle_stream(client, "https://stream2.example.com");
+    });
+    
+    return 0;
+}
 
 ## SSE Message Format
 
