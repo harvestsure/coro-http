@@ -9,3 +9,4 @@
 #include "form_data.hpp"
 #include "cookie_jar.hpp"
 #include "interceptor.hpp"
+#include "sse_event.hpp"

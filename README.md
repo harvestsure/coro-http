@@ -1,696 +1,94 @@
 # coro_http
 
-A modern C++20 HTTP/HTTPS client library based on [ASIO](https://github.com/chriskohlhoff/asio), supporting both synchronous and coroutine-based interfaces with advanced features like automatic compression, redirect following, and configurable timeouts.
+A modern C++20 HTTP/HTTPS client library with both coroutine and synchronous APIs.
 
 ## Features
 
-- ✅ **HTTP/HTTPS Support** - Seamless HTTP and HTTPS requests with SSL/TLS
-- ✅ **C++20 Coroutines** - Modern async/await syntax for non-blocking operations
-- ✅ **Synchronous API** - Traditional blocking API for simple use cases
-- ✅ **Complete HTTP Methods** - GET, POST, PUT, DELETE, HEAD, PATCH, OPTIONS
-- ✅ **Connection Pool** - Keep-Alive support with automatic connection reuse
-- ✅ **Rate Limiting** - Built-in request rate limiter to avoid API throttling
-- ✅ **Auto Retry** - Exponential backoff retry for transient failures
-- ✅ **Timeout Control** - Configurable connect, read, and request timeouts
-- ✅ **Auto Redirects** - Automatic HTTP 3xx redirect following with chain tracking
-- ✅ **Compression** - Automatic gzip/deflate decompression
-- ✅ **Chunked Transfer** - Support for Transfer-Encoding: chunked
-- ✅ **SSL Verification** - Optional certificate verification with custom CA support
-- ✅ **Proxy Support** - HTTP/HTTPS/SOCKS5 proxies with authentication
-- ✅ **Header-Only** - Easy integration, no compilation required
-- ✅ **Custom Headers** - Flexible builder pattern for request customization
-- ✅ **Auto Dependency** - CMake FetchContent automatically downloads ASIO
+- ✅ HTTP/HTTPS support with SSL/TLS
+- ✅ C++20 coroutines for async operations  
+- ✅ Synchronous API for simple use cases
+- ✅ Connection pooling with Keep-Alive
+- ✅ Automatic redirects and compression
+- ✅ Retry policies with exponential backoff
+- ✅ Rate limiting and timeout control
+- ✅ Proxy support (HTTP/HTTPS/SOCKS5)
+- ✅ Server-Sent Events (SSE) streaming
+- ✅ Header-only library
 
-## Why coro_http?
+## Quick Start
 
-- **Production-Ready**: Handles real-world HTTP complexities (redirects, compression, chunked encoding)
-- **Type-Safe**: Leverages C++20 features for compile-time safety
-- **Flexible**: Choose between sync for simplicity or coroutines for performance
-- **Zero Config**: Sensible defaults with opt-in customization
-- **Lightweight**: Header-only library with minimal dependencies
-
-## Requirements
-
-- C++20 compiler (GCC 10+, Clang 10+, MSVC 2019+)
-- CMake 3.20+
-- OpenSSL (for HTTPS support)
-- zlib (for compression support)
-
-### Windows Dependencies
-
-On Windows, we recommend using [vcpkg](https://github.com/microsoft/vcpkg) to install dependencies:
-
-```bash
-# Install vcpkg (if not already installed)
-git clone https://github.com/microsoft/vcpkg.git
-cd vcpkg
-bootstrap-vcpkg.bat
-
-# Install dependencies
-vcpkg install openssl:x64-windows zlib:x64-windows
-
-# Configure CMake with vcpkg toolchain
-cmake -B build -DCMAKE_TOOLCHAIN_FILE=[vcpkg root]/scripts/buildsystems/vcpkg.cmake
-cmake --build build
-```
-
-## Installation
-
-### Using CMake FetchContent
-
-```cmake
-include(FetchContent)
-
-FetchContent_Declare(
-    coro_http
-    GIT_REPOSITORY https://github.com/harvestsure/coro-http.git
-    GIT_TAG main
-)
-
-FetchContent_MakeAvailable(coro_http)
-
-target_link_libraries(your_target PRIVATE coro_http)
-```
-
-### Manual Build
-
-```bash
-git clone https://github.com/harvestsure/coro-http.git
-cd coro_http (Simple & Straightforward)
+### Synchronous API
 
 ```cpp
 #include <coro_http/coro_http.hpp>
-#include <iostream>
 
 int main() {
     asio::io_context io_ctx;
     coro_http::HttpClient client(io_ctx);
     
-    // Simple GET request
     auto response = client.get("https://api.github.com/users/github");
     std::cout << "Status: " << response.status_code() << "\n";
-    std::cout << "Body: " << response.body() << "\n";
-    
-    // POST with JSON body
-    auto post_resp = client.post(
-        "https://httpbin.org/post",
-        R"({"name": "test", "value": 123})"
-    );
-    
-    // Automatic redirect following, compression, and SSL
-    auto redir_resp = client.get("https://httpbin.org/redirect/3");
-    std::cout << "Followed " << redir_resp.redirect_chain().size() << " redirects\n";
     
     return 0;
 }
 ```
 
-### Coroutine API (High Performance)
+### Coroutine API
 
 ```cpp
 #include <coro_http/coro_http.hpp>
-#include <iostream>
-
-asio::awaitable<void> async_main(coro_http::CoroHttpClient& client) {
-    // Async GET request with co_await
-    auto response = co_await client.co_get("https://api.github.com/users/github");
-    std::cout << "Status: " << response.status_code() << "\n";
-    
-    // Concurrent requests for better performance
-    auto resp1_task = client.co_get("https://httpbin.org/get");
-    auto resp2_task = client.co_get("https://httpbin.org/ip");
-    
-    auto resp1 = co_await resp1_task;
-    auto resp2 = co_await resp2_task;
-    
-    std::cout << "Both requests completed!\n" client.co_get("https://api.github.com/users/github");
-    std::cout << "Status: " << response.status_code() << "\n";
-    
-    // Concurrent requests
-    auto resp1 = client.co_get("https://httpbin.org/get");
-    auto resp2 = client.co_get("https://httpbin.org/ip");
-    
-    auto r1 = co_await resp1;
-    auto r2 = co_await resp2;
-}
 
 int main() {
-    coro_http::CoroHttpClient client;
-    client.run([&]() -> asio::awaitable<void> {
-        co_await async_main(client);
+    asio::io_context io_ctx;
+    coro_http::CoroHttpClient client(io_ctx);
+    
+    client.run([]() -> asio::awaitable<void> {
+        auto response = co_await client.co_get("https://api.github.com/users/github");
+        std::cout << "Status: " << response.status_code() << "\n";
     });
+    
     return 0;
 }
 ```
 
-## Configuration
-
-### ClientConfig Options
+### Server-Sent Events (SSE)
 
 ```cpp
-#include <coro_http/client_config.hpp>
+coro_http::HttpRequest request(coro_http::HttpMethod::GET, "https://example.com/events");
+request.add_header("Accept", "text/event-stream");
 
-coro_http::ClientConfig config;
-
-// Timeout settings (in milliseconds)
-config.connect_timeout = std::chrono::milliseconds(5000);  // Connection timeout
-config.read_timeout = std::chrono::milliseconds(10000);     // Read timeout
-config.request_timeout = std::chrono::milliseconds(30000);  // Overall request timeout
-
-// Redirect settings
-config.follow_redirects = true;   // Enable automatic redirect following
-config.max_redirects = 10;        // Maximum number of redirects to follow
-
-// Compression settings
-config.enable_compression = true; // Enable gzip/deflate decompression
-
-// SSL/TLS settings
-config.verify_ssl = false;                        // Enable certificate verification
-config.ca_cert_file = "/path/to/ca-bundle.crt";  // Custom CA certificate file
-config.ca_cert_path = "/path/to/certs/";         // Custom CA certificate directory
-
-// Proxy settings
-config.proxy_url = "http://proxy.example.com:8080";  // HTTP/HTTPS/SOCKS5 proxy
-config.proxy_username = "username";                   // Proxy authentication (optional)
-config.proxy_password = "password";                   // Proxy password (optional)
-
-// Connection pool settings
-config.enable_connection_pool = false;             // Enable connection pooling (default: false, test before production)
-config.max_connections_per_host = 5;               // Max connections per host (default: 5)
-config.connection_idle_timeout = std::chrono::seconds(60);  // Idle timeout (default: 60s)
-
-// Rate limiting settings  
-config.enable_rate_limit = true;                   // Enable rate limiting (default: false)
-config.rate_limit_requests = 100;                  // Max requests per window (default: 100)
-config.rate_limit_window = std::chrono::seconds(1);  // Rate limit window (default: 1s)
-
-// Retry settings
-config.enable_retry = true;                        // Enable automatic retry (default: false)
-config.max_retries = 3;                            // Maximum retry attempts (default: 3)
-config.initial_retry_delay = std::chrono::milliseconds(1000);  // Initial retry delay (default: 1s)
-config.retry_backoff_factor = 2.0;                 // Exponential backoff multiplier (default: 2.0)
-config.max_retry_delay = std::chrono::milliseconds(30000);     // Max retry delay (default: 30s)
-config.retry_on_timeout = true;                    // Retry on timeout (default: true)
-config.retry_on_connection_error = true;           // Retry on connection errors (default: true)
-config.retry_on_5xx = false;                       // Retry on 5xx errors (default: false)
-
-// Create client with config
-asio::io_context io_ctx;
-coro_http::HttpClient client(io_ctx, config);
-
-// Or update config after creation
-client.set_config(config);
-```
-
-### Advanced Features
-
-#### Redirect Chain Tracking
-
-```cpp
-auto response = client.get("https://httpbin.org/redirect/3");
-std::cout << "Final status: " << response.status_code() << "\n";
-std::cout << "Redirects: " << response.redirect_chain().size() << "\n";
-for (const auto& url : response.redirect_chain()) {
-    std::cout << "  -> " << url << "\n";
-}
-```
-
-#### Compression Support
-
-```cpp
-// Compression is enabled by default
-// The library automatically:
-// - Adds "Accept-Encoding: gzip, deflate" header
-// - Decompresses response based on Content-Encoding header
-auto response = client.get("https://httpbin.org/gzip");
-// Body is automatically decompressed
-```
-
-#### SSL Certificate Verification
-
-```cpp
-asio::io_context io_ctx;
-coro_http::ClientConfig config;
-config.verify_ssl = true;  // Enable strict certificate verification
-config.ca_cert_file = "/etc/ssl/certs/ca-certificates.crt";
-
-coro_http::HttpClient client(io_ctx, config);
-auto response = client.get("https://example.com");
-```
-
-#### Proxy Support
-
-The library supports HTTP, HTTPS, and SOCKS5 proxies with optional authentication:
-
-```cpp
-coro_http::ClientConfig config;
-
-// HTTP proxy (standard proxy for HTTP requests)
-config.proxy_url = "http://proxy.example.com:8080";
-
-// SOCKS5 proxy (works with both HTTP and HTTPS)
-config.proxy_url = "socks5://127.0.0.1:1080";
-
-// Proxy with authentication
-config.proxy_url = "http://proxy.example.com:8080";
-config.proxy_username = "user";
-config.proxy_password = "password";
-
-asio::io_context io_ctx;
-coro_http::HttpClient client(io_ctx, config);
-
-// For HTTP requests, proxy forwards the request
-auto http_resp = client.get("http://example.com");
-
-// For HTTPS requests, proxy uses HTTP CONNECT tunneling
-auto https_resp = client.get("https://example.com");
-```
-
-**Supported Proxy Types:**
-- **HTTP Proxy** (`http://...`): Standard HTTP proxy for HTTP requests, CONNECT tunneling for HTTPS
-- **HTTPS Proxy** (`https://...`): Same as HTTP proxy but with TLS connection to proxy server
-- **SOCKS5 Proxy** (`socks5://...`): SOCKS5 protocol for both HTTP and HTTPS with optional username/password authentication
-
-```cpp
-// Complete proxy example
-asio::io_context io_ctx;
-coro_http::ClientConfig config;
-config.proxy_url = "socks5://proxy.example.com:1080";
-config.proxy_username = "myuser";
-config.proxy_password = "mypass";
-config.verify_ssl = true;
-
-coro_http::CoroHttpClient client(io_ctx, config);
-client.run([&]() -> asio::awaitable<void> {
-    auto response = co_await client.co_get("https://api.ipify.org?format=json");
-    std::cout << "My IP through proxy: " << response.body() << "\n";
+co_await client.co_stream_events(request, [](const coro_http::SseEvent& event) {
+    std::cout << "Event type: " << event.type << "\n";
+    std::cout << "Data: " << event.data << "\n";
 });
 ```
 
-#### Connection Pool & Keep-Alive
+## Requirements
 
-> **✅ Status**: Connection pooling has been **significantly improved** with fixes for major stability issues. Still recommended to test with your specific endpoints before production use.
+- C++20 compiler
+- CMake 3.20+
+- OpenSSL, zlib
 
-The library supports connection pool for better performance with automatic keep-alive:
-
-```cpp
-asio::io_context io_ctx;
-coro_http::ClientConfig config;
-config.enable_connection_pool = true;         // Now safer to enable!
-config.max_connections_per_host = 5;
-config.connection_idle_timeout = std::chrono::seconds(60);
-
-coro_http::HttpClient client(io_ctx, config);
-```
-
-**Recent Fixes (v1.1):**
-- ✅ Proper `Connection: close` response header handling
-- ✅ SSL session state validation (handshake completion check)
-- ✅ Server-initiated connection close detection
-- ✅ Non-blocking socket health checks
-- ✅ Graceful connection shutdown
-
-**How it works:**
-- Reuses TCP/TLS connections for multiple requests to the same host
-- Automatically detects when server closes connections
-- Honors `Connection: close` headers from servers
-- Validates SSL session state before reuse
-- Removes stale/invalid connections from pool
-
-**Performance benefits:**
-- Eliminates TCP handshake overhead (~1 RTT saved)
-- Eliminates TLS handshake overhead (~2 RTTs saved for HTTPS)
-- Typical speedup: 2-5x for sequential requests to same host
-
-**Testing recommendations:**
-- Test with your specific API endpoints
-- Monitor connection pool statistics
-- Suitable for most REST APIs and HTTP services
-- Default: disabled for maximum compatibility
-
-#### Rate Limiting
-
-Built-in rate limiter helps avoid API throttling (essential for exchange APIs):
-
-```cpp
-coro_http::ClientConfig config;
-config.enable_rate_limit = true;
-config.rate_limit_requests = 10;              // 10 requests
-config.rate_limit_window = std::chrono::seconds(1);  // per second
-
-asio::io_context io_ctx;
-coro_http::HttpClient client(io_ctx, config);
-
-// These requests will be automatically throttled
-for (int i = 0; i < 20; ++i) {
-    // First 10 requests go through immediately
-    // Next 10 wait until the next 1-second window
-    auto resp = client.get("https://api.example.com/data");
-    
-    std::cout << "Rate limit remaining: " << client.get_rate_limit_remaining() << "\n";
-}
-
-// Reset rate limiter if needed
-client.reset_rate_limiter();
-```
-
-**Common Exchange Rate Limits:**
-- **Binance**: 1200 requests/minute (20 req/s)
-- **OKX**: 20 requests/2 seconds (10 req/s)  
-- **Coinbase**: 10 requests/second
-
-**Trading Bot Example:**
-```cpp
-asio::io_context io_ctx;
-coro_http::ClientConfig config;
-config.enable_connection_pool = true;
-config.enable_rate_limit = true;
-config.rate_limit_requests = 10;
-config.rate_limit_window = std::chrono::seconds(1);
-
-coro_http::CoroHttpClient client(io_ctx, config);
-
-client.run([&]() -> asio::awaitable<void> {
-    while (true) {
-        // Fetch ticker prices (automatically rate limited)
-        auto btc = co_await client.co_get("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT");
-        auto eth = co_await client.co_get("https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT");
-        
-        // Process data...
-        std::cout << "Remaining capacity: " << client.get_rate_limit_remaining() << "\n";
-    }
-});
-```
-
-#### Automatic Retry with Exponential Backoff
-
-Built-in retry mechanism improves reliability for transient failures:
-
-```cpp
-asio::io_context io_ctx;
-coro_http::ClientConfig config;
-config.enable_retry = true;
-config.max_retries = 3;                          // Retry up to 3 times
-config.initial_retry_delay = std::chrono::milliseconds(1000);  // Start with 1s delay
-config.retry_backoff_factor = 2.0;               // Double delay each retry
-config.max_retry_delay = std::chrono::milliseconds(30000);     // Cap at 30s
-config.retry_on_timeout = true;                  // Retry on timeouts
-config.retry_on_connection_error = true;         // Retry on connection errors
-config.retry_on_5xx = false;                     // Don't retry 5xx by default
-
-coro_http::HttpClient client(io_ctx, config);
-
-try {
-    // Automatically retries on timeout/connection errors
-    auto resp = client.get("https://unreliable-api.com/data");
-    std::cout << "Success after retries!\n";
-} catch (const std::exception& e) {
-    std::cerr << "Failed after " << config.max_retries << " retries: " << e.what() << "\n";
-}
-}
-```
-
-**Retry Strategy:**
-- **Exponential Backoff**: Delays double each retry (1s → 2s → 4s → 8s...)
-- **Jitter**: ±25% random variation to avoid thundering herd
-- **Smart Detection**: Automatically identifies retry-able errors
-- **Configurable**: Choose which error types to retry
-
-**Default Retry Conditions:**
-- ✅ Connection timeouts
-- ✅ Read timeouts  
-- ✅ Connection refused/reset
-- ✅ Network errors
-- ❌ 5xx server errors (opt-in with `retry_on_5xx = true`)
-- ❌ 4xx client errors (never retried)
-- ❌ Successful responses (never retried)
-
-**Coroutine Example (Async Delays):**
-```cpp
-coro_http::ClientConfig config;
-config.enable_retry = true;
-config.max_retries = 5;
-config.retry_on_5xx = true;  // Also retry server errors
-
-asio::io_context io_ctx;
-coro_http::CoroHttpClient client(io_ctx, config);
-
-client.run([&]() -> asio::awaitable<void> {
-    try {
-        // Uses async timers for retry delays (non-blocking)
-        auto resp = co_await client.co_get("https://flaky-service.com/api");
-        std::cout << "Response: " << resp.body() << "\n";
-    } catch (const std::exception& e) {
-        std::cerr << "All retries exhausted: " << e.what() << "\n";
-    }
-});
-```
-
-**Best Practices:**
-- Enable for production APIs with transient failures
-- Use with rate limiting to respect API limits during retries
-- Set appropriate `max_retry_delay` to avoid excessive waits
-- Enable `retry_on_5xx` for idempotent operations only (GET, HEAD, OPTIONS)
-- Don't retry on write operations (POST, PUT, DELETE) without idempotency guarantees
-
-#### Timeout Handling
-
-```cpp
-coro_http::ClientConfig config;
-config.connect_timeout = std::chrono::milliseconds(1000);
-config.read_timeout = std::chrono::milliseconds(2000);
-
-asio::io_context io_ctx;
-coro_http::HttpClient client(io_ctx, config);
-
-try {
-    auto response = client.get("https://slow-server.com");
-} catch (const std::runtime_error& e) {
-    // Handle timeout: "Connection timeout" or "Read timeout"
-    std::cerr << "Request failed: " << e.what() << "\n";
-}
-```
-
-## API Reference
-
-### Synchronous HttpClient
-
-```cpp
-// Create io_context
-asio::io_context io_ctx;
-
-// Default configuration
-coro_http::HttpClient client(io_ctx);
-
-// With custom configuration
-coro_http::ClientConfig config;
-config.connect_timeout = std::chrono::milliseconds(5000);
-coro_http::HttpClient client(io_ctx, config);
-
-// HTTP Methods
-auto resp = client.get(url);
-auto resp = client.post(url, body);
-auto resp = client.put(url, body);
-auto resp = client.del(url);
-auto resp = client.head(url);
-auto resp = client.patch(url, body);
-auto resp = client.options(url);
-
-// Custom request with headers
-coro_http::HttpRequest req(coro_http::HttpMethod::GET, url);
-req.add_header("Authorization", "Bearer token")
-   .add_header("User-Agent", "MyApp/1.0")
-   .set_body("request body");
-auto resp = client.execute(req);
-```
-
-### Coroutine CoroHttpClient
-
-```cpp
-asio::io_context io_ctx;
-coro_http::CoroHttpClient client(io_ctx);
-
-client.run([&]() -> asio::awaitable<void> {
-    // All methods return awaitable<HttpResponse>
-    auto resp = co_await client.co_get(url);
-    auto resp = co_await client.co_post(url, body);
-    auto resp = co_await client.co_put(url, body);
-    auto resp = co_await client.co_delete(url);
-    auto resp = co_await client.co_head(url);
-    auto resp = co_await client.co_patch(url, body);
-    auto resp = co_await client.co_options(url);
-    
-    // Custom coroutine request
-    coro_http::HttpRequest req(coro_http::HttpMethod::POST, url);
-    req.add_header("Content-Type", "application/json");
-    auto resp = co_await client.co_execute(req);
-});
-```
-
-### Response Object
-
-```cpp
-class HttpResponse {
-    int status_code() const;
-    const std::string& reason() const;
-    const std::map<std::string, std::string>& headers() const;
-    const std::string& body() const;
-    const std::vector<std::string>& redirect_chain() const;
-    std::string get_header(const std::string& key) const;  // Case-insensitive
-};
-
-// Usage
-auto response = client.get("https://api.example.com");
-std::cout << "Status: " << response.status_code() << "\n";
-std::cout << "Body: " << response.body() << "\n";
-std::cout << "Content-Type: " << response.get_header("Content-Type") << "\n";
-
-// Check redirects
-if (!response.redirect_chain().empty()) {
-    std::cout << "Followed " << response.redirect_chain().size() << " redirects\n";
-}
-```
-    const std::string& reason() const;
-    const std::map<std::string, std::string>& headers() const;
-    const std::string& body() const;
-};
-```
-
-## Examples
-
-See the [examples](examples/) directory for complete working examples:
-
-- [sync_example.cpp](examples/sync_example.cpp) - Synchronous API usage with HTTP/HTTPS
-- [coro_example.cpp](examples/coro_example.cpp) - Coroutine API usage with all methods
-- [https_example.cpp](examples/https_example.cpp) - HTTPS requests demonstration
-- [advanced_example.cpp](examples/advanced_example.cpp) - Advanced features (compression, redirects, timeouts, custom headers)
-- [proxy_example.cpp](examples/proxy_example.cpp) - Proxy support (HTTP/HTTPS/SOCKS5) with authentication
-- [keepalive_example.cpp](examples/keepalive_example.cpp) - Connection pooling and rate limiting for high-performance scenarios
-- [retry_example.cpp](examples/retry_example.cpp) - Automatic retry with exponential backoff for reliability
-
-## Building Examples
+## Installation
 
 ```bash
-cd build
+git clone https://github.com/harvestsure/coro-http.git
+cd coro-http
+mkdir build && cd build
 cmake ..
 make
-
-# Run examples
-./example_sync
-./example_coro
-./example_https
-./example_advanced
-./example_proxy
-./example_keepalive
-./example_retry
 ```
 
-## Troubleshooting
+## Documentation
 
-### SSL Errors
+For detailed documentation, see:
 
-If you encounter SSL certificate errors, you can:
-
-1. Disable verification (not recommended for production):
-```cpp
-config.verify_ssl = false;
-```
-
-2. Specify a CA certificate bundle:
-```cpp
-config.verify_ssl = true;
-config.ca_cert_file = "/etc/ssl/certs/ca-certificates.crt";
-```
-
-
-## Performance Considerations
-
-### Synchronous vs Coroutine
-
-- **Synchronous API**: Best for simple scripts, CLI tools, or when making sequential requests
-- **Coroutine API**: Best for servers, high-throughput applications, or when making many concurrent requests
-
-### Connection Pooling (Improved and Ready for Testing)
-
-Connection pooling has been significantly improved with major bug fixes:
-
-- **Status**: ✅ Core issues fixed, ready for broader testing
-- **Fixes**: Connection: close handling, SSL validation, server close detection
-- **Performance**: 2-5x speedup for repeated requests to same host
-
-**Enable for testing:**
-```cpp
-config.enable_connection_pool = true;  // Recommended: test with your endpoints first
-```
-
-**Best for:**
-- REST APIs with keep-alive support (most modern APIs)
-- High-frequency requests to same hosts
-- Trading/exchange APIs with rate limits
-- Internal microservices
-- After testing with your specific endpoints
-
-**What's fixed:**
-- ✅ Properly handles `Connection: close` from servers
-- ✅ Validates SSL session state before reuse
-- ✅ Detects server-initiated connection closes
-- ✅ Removes invalid connections automatically
-
-**Still needs more testing for:**
-- Edge cases with various HTTP server implementations
-- Long-running high-load production scenarios
-- Complex proxy configurations
-
-### Rate Limiting
-
-Enable rate limiting to avoid API throttling:
-
-```cpp
-config.enable_rate_limit = true;
-config.rate_limit_requests = 10;  // Match your API limit
-config.rate_limit_window = std::chrono::seconds(1);
-```
-
-### Memory Usage
-
-The library buffers entire responses in memory. For very large responses (e.g., large file downloads), consider streaming approaches or external tools.
-
-## Roadmap
-
-Completed and under consideration:
-
-- ✅ Rate limiting
-- ✅ Connection pooling with proper Connection: close handling
-- ✅ SSL session state validation
-- ✅ Server close detection
-- ✅ Request retry with exponential backoff
-- 🚧 More connection pool testing in production scenarios
-- 🔜 Cookie management
-- 🔜 Streaming downloads/uploads  
-- 🔜 HTTP/2 support
-- 🔜 WebSocket upgrade
-- 🔜 Async rate limiter (currently synchronous)
-- 🔜 Request/response interceptors
-- 🔜 Multipart form-data encoding
-### Timeout Issues
-
-Adjust timeouts based on your network conditions:
-```cpp
-config.connect_timeout = std::chrono::milliseconds(10000);  // 10 seconds
-config.read_timeout = std::chrono::milliseconds(30000);     // 30 seconds
-```
-
-### Compression Issues
-
-If you experience issues with compressed responses:
-```cpp
-config.enable_compression = false;  // Disable automatic decompression
-```
+- [API Reference](docs/API_REFERENCE.md) - Complete API documentation
+- [SSE Support](docs/SSE_SUPPORT.md) - Server-Sent Events guide
+- [Examples](docs/EXAMPLES.md) - Detailed examples
+- [Features](docs/FEATURES.md) - Feature descriptions
+- [Configuration](docs/CONFIGURATION.md) - Advanced configuration
 
 ## License
 
 MIT License
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.

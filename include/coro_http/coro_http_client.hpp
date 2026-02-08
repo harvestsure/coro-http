@@ -10,6 +10,7 @@
 #include "rate_limiter.hpp"
 #include "retry_policy.hpp"
 #include "cookie_jar.hpp"
+#include "sse_event.hpp"
 #include <asio.hpp>
 #include <asio/ssl.hpp>
 #include <asio/co_spawn.hpp>
@@ -18,6 +19,7 @@
 #include <asio/steady_timer.hpp>
 #include <sstream>
 #include <type_traits>
+#include <functional>
 
 namespace coro_http {
 
@@ -641,6 +643,196 @@ public:
 
     asio::awaitable<HttpResponse> co_options(const std::string& url) {
         co_return co_await co_execute(HttpRequest(HttpMethod::OPTIONS, url));
+    }
+
+    // SSE streaming support with callback
+    // EventCallback: void(const SseEvent& event)
+    using SseEventCallback = std::function<void(const SseEvent&)>;
+    
+    asio::awaitable<void> co_stream_events(const HttpRequest& request, 
+                                           SseEventCallback callback) {
+        auto url_info = parse_url(request.url());
+        
+        HttpRequest req_with_cookies = request;
+        if (config_.enable_cookies) {
+            std::string cookies = cookie_jar_.get_cookies_for_request(
+                url_info.host, url_info.path, url_info.is_https);
+            if (!cookies.empty()) {
+                req_with_cookies.add_header("Cookie", cookies);
+            }
+        }
+        
+        if (url_info.is_https) {
+            co_await co_stream_events_https(req_with_cookies, url_info, callback);
+        } else {
+            co_await co_stream_events_http(req_with_cookies, url_info, callback);
+        }
+        co_return;
+    }
+    
+    asio::awaitable<void> co_stream_events_http(const HttpRequest& request, 
+                                                 const UrlInfo& url_info,
+                                                 SseEventCallback callback) {
+        rate_limiter_.acquire();
+        
+        asio::ip::tcp::socket socket(io_context_);
+        co_await co_connect_socket(socket, url_info);
+        
+        std::string request_str = build_request(request, url_info, config_.enable_compression);
+        co_await asio::async_write(socket, asio::buffer(request_str), asio::use_awaitable);
+        
+        std::array<char, 8192> buffer;
+        std::string partial_event;
+        SseEvent current_event;
+        std::vector<std::string> data_lines;
+        
+        // Read response headers first
+        std::string headers;
+        bool headers_complete = false;
+        
+        while (!headers_complete) {
+            auto [ec, len] = co_await socket.async_read_some(
+                asio::buffer(buffer),
+                asio::as_tuple(asio::use_awaitable)
+            );
+            
+            if (ec) throw std::system_error(ec);
+            if (len == 0) throw std::runtime_error("Connection closed while reading headers");
+            
+            headers.append(buffer.data(), len);
+            size_t header_end = headers.find("\r\n\r\n");
+            if (header_end != std::string::npos) {
+                headers_complete = true;
+                partial_event = headers.substr(header_end + 4);
+                headers = headers.substr(0, header_end);
+            }
+        }
+        
+        // Stream event lines
+        while (true) {
+            auto [ec, len] = co_await socket.async_read_some(
+                asio::buffer(buffer),
+                asio::as_tuple(asio::use_awaitable)
+            );
+            
+            if (len > 0) {
+                partial_event.append(buffer.data(), len);
+                
+                // Process complete lines
+                size_t pos = 0;
+                while ((pos = partial_event.find('\n')) != std::string::npos) {
+                    std::string line = partial_event.substr(0, pos);
+                    partial_event = partial_event.substr(pos + 1);
+                    
+                    std::vector<SseEvent> events;
+                    parse_sse_line(line, current_event, data_lines, events);
+                    
+                    for (const auto& event : events) {
+                        callback(event);
+                    }
+                }
+            }
+            
+            // Check for end of stream or error
+            if (len == 0 || ec == asio::error::eof || (ec && ec != asio::error::would_block)) {
+                // Process any remaining data
+                if (!partial_event.empty()) {
+                    std::vector<SseEvent> events;
+                    parse_sse_line(partial_event, current_event, data_lines, events);
+                    for (const auto& event : events) {
+                        callback(event);
+                    }
+                }
+                break;
+            }
+        }
+        co_return;
+    }
+    
+    asio::awaitable<void> co_stream_events_https(const HttpRequest& request,
+                                                  const UrlInfo& url_info,
+                                                  SseEventCallback callback) {
+        rate_limiter_.acquire();
+        
+        asio::ssl::stream<asio::ip::tcp::socket> ssl_socket(io_context_, ssl_context_);
+        
+        co_await co_connect_socket(ssl_socket.next_layer(), url_info);
+        
+        if (config_.verify_ssl) {
+            SSL_set_tlsext_host_name(ssl_socket.native_handle(), url_info.host.c_str());
+        }
+        
+        co_await ssl_socket.async_handshake(asio::ssl::stream_base::client, asio::use_awaitable);
+        
+        std::string request_str = build_request(request, url_info, config_.enable_compression);
+        co_await asio::async_write(ssl_socket, asio::buffer(request_str), asio::use_awaitable);
+        
+        std::array<char, 8192> buffer;
+        std::string partial_event;
+        SseEvent current_event;
+        std::vector<std::string> data_lines;
+        
+        // Read response headers first
+        std::string headers;
+        bool headers_complete = false;
+        
+        while (!headers_complete) {
+            auto [ec, len] = co_await ssl_socket.async_read_some(
+                asio::buffer(buffer),
+                asio::as_tuple(asio::use_awaitable)
+            );
+            
+            if (ec) throw std::system_error(ec);
+            if (len == 0) throw std::runtime_error("Connection closed while reading headers");
+            
+            headers.append(buffer.data(), len);
+            size_t header_end = headers.find("\r\n\r\n");
+            if (header_end != std::string::npos) {
+                headers_complete = true;
+                partial_event = headers.substr(header_end + 4);
+                headers = headers.substr(0, header_end);
+            }
+        }
+        
+        // Stream event lines
+        while (true) {
+            auto [ec, len] = co_await ssl_socket.async_read_some(
+                asio::buffer(buffer),
+                asio::as_tuple(asio::use_awaitable)
+            );
+            
+            if (len > 0) {
+                partial_event.append(buffer.data(), len);
+                
+                // Process complete lines
+                size_t pos = 0;
+                while ((pos = partial_event.find('\n')) != std::string::npos) {
+                    std::string line = partial_event.substr(0, pos);
+                    partial_event = partial_event.substr(pos + 1);
+                    
+                    std::vector<SseEvent> events;
+                    parse_sse_line(line, current_event, data_lines, events);
+                    
+                    for (const auto& event : events) {
+                        callback(event);
+                    }
+                }
+            }
+            
+            // Check for end of stream or error
+            if (len == 0 || ec == asio::error::eof || (ec && ec != asio::error::would_block)) {
+                // Process any remaining data
+                if (!partial_event.empty()) {
+                    std::vector<SseEvent> events;
+                    parse_sse_line(partial_event, current_event, data_lines, events);
+                    for (const auto& event : events) {
+                        callback(event);
+                    }
+                }
+                break;
+            }
+        }
+        co_return;
     }
 
     template<typename CoroFunc>

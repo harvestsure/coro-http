@@ -52,3 +52,8 @@ target_link_libraries(example_auth_features PRIVATE coro_http)
 
 add_executable(example_auth_local examples/auth_features_local_test.cpp)
 target_link_libraries(example_auth_local PRIVATE coro_http)
+add_executable(example_sse_sync examples/sse_sync_example.cpp)
+target_link_libraries(example_sse_sync PRIVATE coro_http)
+
+add_executable(example_sse_coro examples/sse_coro_example.cpp)
+target_link_libraries(example_sse_coro PRIVATE coro_http)
