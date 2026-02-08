@@ -20,27 +20,75 @@ if (ENABLE_SANITIZER)
   )
 endif()
 
-include(FetchContent)
+# Try to find ASIO from VCPKG first, fall back to FetchContent
+find_package(asio CONFIG QUIET)
 
-FetchContent_Declare(
-    asio
-    GIT_REPOSITORY https://github.com/chriskohlhoff/asio.git
-    GIT_TAG asio-1-30-2
-)
-
-FetchContent_MakeAvailable(asio)
+if(NOT asio_FOUND)
+  # Fallback to FetchContent for local development without VCPKG
+  include(FetchContent)
+  
+  FetchContent_Declare(
+      asio
+      GIT_REPOSITORY https://github.com/chriskohlhoff/asio.git
+      GIT_TAG asio-1-30-2
+  )
+  
+  FetchContent_MakeAvailable(asio)
+endif()
 
 find_package(OpenSSL REQUIRED)
 find_package(ZLIB REQUIRED)
 
 add_library(coro_http INTERFACE)
+
+# Include directories
 target_include_directories(coro_http INTERFACE 
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
-    ${asio_SOURCE_DIR}/asio/include
 )
+
+# Add ASIO includes (from FetchContent if not found via find_package)
+if(NOT asio_FOUND)
+  target_include_directories(coro_http INTERFACE 
+      $<BUILD_INTERFACE:${asio_SOURCE_DIR}/asio/include>
+  )
+endif()
+
 target_compile_definitions(coro_http INTERFACE ASIO_STANDALONE)
 target_link_libraries(coro_http INTERFACE OpenSSL::SSL OpenSSL::Crypto ZLIB::ZLIB)
+
+# Link ASIO if found via find_package
+if(asio_FOUND)
+  target_link_libraries(coro_http INTERFACE asio::asio)
+endif()
+
+# Install targets
+install(DIRECTORY include/coro_http DESTINATION include)
+install(TARGETS coro_http EXPORT coro_httpTargets)
+install(EXPORT coro_httpTargets 
+        FILE coro_httpTargets.cmake
+        NAMESPACE coro_http::
+        DESTINATION lib/cmake/coro_http)
+
+# Install CMake config files
+include(CMakePackageConfigHelpers)
+configure_package_config_file(
+    cmake/coro_httpConfig.cmake.in
+    "${CMAKE_CURRENT_BINARY_DIR}/coro_httpConfig.cmake"
+    INSTALL_DESTINATION lib/cmake/coro_http
+)
+
+write_basic_package_version_file(
+    "${CMAKE_CURRENT_BINARY_DIR}/coro_httpConfigVersion.cmake"
+    VERSION 1.0.0
+    COMPATIBILITY SameMajorVersion
+)
+
+install(FILES 
+    "${CMAKE_CURRENT_BINARY_DIR}/coro_httpConfig.cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/coro_httpConfigVersion.cmake"
+    DESTINATION lib/cmake/coro_http
+)
 
 add_executable(example_coro examples/coro_example.cpp)
 target_link_libraries(example_coro PRIVATE coro_http)
