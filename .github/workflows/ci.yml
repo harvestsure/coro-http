@@ -47,7 +47,24 @@ jobs:
     - name: Install dependencies (Windows)
       if: runner.os == 'Windows'
       run: |
-        choco install ninja cmake
+        choco install ninja cmake -y
+    
+    - name: Setup vcpkg cache (Windows)
+      if: runner.os == 'Windows'
+      uses: actions/cache@v3
+      with:
+        path: |
+          ${{ github.workspace }}/vcpkg_installed
+          ~/.vcpkg
+        key: vcpkg-windows-${{ hashFiles('**/vcpkg.json') }}
+        restore-keys: vcpkg-windows-
+    
+    - name: Cache APT packages (Linux)
+      if: runner.os == 'Linux'
+      uses: awalsh128/cache-apt-pkgs-action@latest
+      with:
+        packages: libssl-dev zlib1g-dev gcc-12 g++-12 clang-18
+        version: 1.0
     
     - name: Setup CMake
       uses: lukka/get-cmake@latest
@@ -87,7 +104,7 @@ jobs:
       if: runner.os == 'Windows'
       run: |
         cd build
-        cmake .. -DBUILD_TESTS=ON -DENABLE_SANITIZER=OFF
+        cmake .. -DBUILD_TESTS=ON -DENABLE_SANITIZER=OFF -G "Ninja Multi-Config"
     
     - name: Build
       run: |
@@ -149,6 +166,13 @@ jobs:
           zlib1g-dev \
           clang-18
     
+    - name: Cache build artifacts (Sanitizer)
+      uses: actions/cache@v3
+      with:
+        path: build
+        key: sanitizer-build-${{ hashFiles('**/*.cpp', '**/*.hpp') }}
+        restore-keys: sanitizer-build-
+    
     - name: Setup CMake
       uses: lukka/get-cmake@latest
     
@@ -190,6 +214,13 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y libssl-dev zlib1g-dev
+    
+    - name: Cache code-quality build
+      uses: actions/cache@v3
+      with:
+        path: build
+        key: code-quality-${{ hashFiles('**/*.cpp', '**/*.hpp') }}
+        restore-keys: code-quality-
     
     - name: Create build directory
       run: mkdir -p build
