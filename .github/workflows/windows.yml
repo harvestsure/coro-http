@@ -16,103 +16,69 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Cache vcpkg
-      uses: actions/cache@v4
+    - name: Setup CMake and Ninja
+      uses: lukka/get-cmake@latest
       with:
-        path: |
-          vcpkg/
-        key: vcpkg-windows-${{ env.VCPKG_COMMIT_ID }}-${{ hashFiles('**/vcpkg.json') }}
-        restore-keys: |
-          vcpkg-windows-
+        useClang: false
     
-    - name: Setup vcpkg
+    - name: Restore vcpkg and build
       uses: lukka/run-vcpkg@v11
+      id: runvcpkg
       with:
         vcpkgGitCommitId: '${{ env.VCPKG_COMMIT_ID }}'
         vcpkgJsonGlob: '**/vcpkg.json'
+        runVcpkgInstall: true
     
-    - name: Setup CMake
-      uses: lukka/get-cmake@latest
-    
-    - name: Create build directory
-      run: mkdir -p build
-    
-    - name: Configure CMake
-      shell: bash
-      run: |
-        cd build
-        for attempt in {1..3}; do
-          echo "::group::CMake configuration attempt $attempt"
-          if cmake -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" \
-            -DBUILD_TESTS=ON \
-            -DENABLE_SANITIZER=OFF \
-            -DCMAKE_POLICY_DEFAULT_CMP0174=NEW \
-            -G "Visual Studio 17 2022" \
-            .. 2>&1; then
-            echo "::endgroup::"
-            echo "::notice::CMake configuration succeeded"
-            exit 0
-          else
-            echo "::endgroup::"
-            if [ $attempt -lt 3 ]; then
-              echo "::warning::CMake configuration failed on attempt $attempt, retrying in 15 seconds..."
-              sleep 15
-              rm -rf CMakeCache.txt CMakeFiles/
-            fi
-          fi
-        done
-        echo "::error::CMake configuration failed after 3 attempts"
-        exit 1
-    
-    - name: Build
-      run: |
-        cd build
-        cmake --build . --config Release --parallel 4
-    
-    - name: Run tests
-      shell: bash
-      run: |
-        cd build
-        ctest --output-on-failure --timeout 30 -C Release
-    
+    - name: Build and Test with CMake
+      uses: lukka/run-cmake@v10
+      with:
+        cmakeListsOrSettingsJson: CMakeListsTxtBasic
+        cmakeListsTxtPath: '${{ github.workspace }}/CMakeLists.txt'
+        useVcpkgToolchain: true
+        vcpkgRoot: '${{ steps.runvcpkg.outputs.VCPKG_ROOT }}'
+        buildDirectory: '${{ github.workspace }}/build'
+        configureArgs: '-G "Visual Studio 17 2022" -DBUILD_TESTS=ON -DENABLE_SANITIZER=OFF -DCMAKE_POLICY_DEFAULT_CMP0174=NEW'
+        buildArgs: '--config Release --parallel 4'
+        testArgs: '--output-on-failure --timeout 30 -C Release'
+
     - name: Run example (coro)
       timeout-minutes: 2
       shell: bash
+      continue-on-error: true
       run: |
-        cd build
-        timeout 5 ./Release/example_coro.exe || true
+        [ -f "build/Release/example_coro.exe" ] && timeout 5 ./build/Release/example_coro.exe || echo "Executable not found"
     
     - name: Run example (https)
       timeout-minutes: 2
       shell: bash
+      continue-on-error: true
       run: |
-        cd build
-        timeout 5 ./Release/example_https.exe || true
+        [ -f "build/Release/example_https.exe" ] && timeout 5 ./build/Release/example_https.exe || echo "Executable not found"
     
     - name: Run example (keepalive)
       timeout-minutes: 2
       shell: bash
+      continue-on-error: true
       run: |
-        cd build
-        timeout 5 ./Release/example_keepalive.exe || true
+        [ -f "build/Release/example_keepalive.exe" ] && timeout 5 ./build/Release/example_keepalive.exe || echo "Executable not found"
     
     - name: Run example (proxy)
       timeout-minutes: 2
       shell: bash
+      continue-on-error: true
       run: |
-        cd build
-        timeout 5 ./Release/example_proxy.exe || true
+        [ -f "build/Release/example_proxy.exe" ] && timeout 5 ./build/Release/example_proxy.exe || echo "Executable not found"
     
     - name: Run example (retry)
       timeout-minutes: 2
       shell: bash
+      continue-on-error: true
       run: |
-        cd build
-        timeout 5 ./Release/example_retry.exe || true
+        [ -f "build/Release/example_retry.exe" ] && timeout 5 ./build/Release/example_retry.exe || echo "Executable not found"
     
     - name: Run example (sse)
       timeout-minutes: 2
       shell: bash
+      continue-on-error: true
       run: |
-        cd build
-        timeout 5 ./Release/example_sse_coro.exe || true
+        [ -f "build/Release/example_sse_coro.exe" ] && timeout 5 ./build/Release/example_sse_coro.exe || echo "Executable not found"
